@@ -2,5 +2,8 @@ streamlit
 fal-client
 tavily-python
 openai
-python-dotenv
 pillow
+requests
+python-dotenv
+requests
+hai-agents
