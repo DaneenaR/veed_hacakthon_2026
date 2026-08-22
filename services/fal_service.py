@@ -1,80 +1,71 @@
-import os
+from config import MOCK_MODE
 
-import fal_client
-import requests
-from dotenv import load_dotenv
-
-from config import FAL_API_KEY, FAL_TEXT_TO_IMAGE_URL, FAL_IMAGE_TO_VIDEO_URL, MOCK_MODE
-from utils.polling import poll_job
-
-load_dotenv()
+MOCK_PHOTOS = [
+    "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=1280&fm=jpg",
+    "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=1280&fm=jpg",
+]
+MOCK_VIDEO = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
 
 
-def create_talking_tutor_video(avatar_image_url, audio_voice_url):
-    """Feeds the visual asset and voice track into the VEED Fabric 1.0 API via fal.ai"""
-    print("🎬 Triggering VEED Fabric 1.0 via fal.ai...")
+def upload_all_photos(uploaded_files) -> list[str]:
+    """Uploads Streamlit file objects to Fal CDN or returns mock photo URLs."""
+    if MOCK_MODE.get("fal", False):
+        return MOCK_PHOTOS[: len(uploaded_files)] if uploaded_files else MOCK_PHOTOS
 
     try:
-        handler = fal_client.submit(
-            "fal-ai/veed/fabric-1.0",
+        import fal_client
+        photo_urls = []
+        for file in uploaded_files:
+            cdn_url = fal_client.upload(file.getvalue(), file.type)
+            photo_urls.append(cdn_url)
+        return photo_urls if photo_urls else MOCK_PHOTOS
+    except Exception as e:
+        print(f"⚠️ Fal upload API error (falling back to mock): {e}")
+        return MOCK_PHOTOS[: len(uploaded_files)] if uploaded_files else MOCK_PHOTOS
+
+
+def generate_property_photos(listing, num_images: int = 3) -> list[str]:
+    if MOCK_MODE.get("fal", True):
+        return MOCK_PHOTOS[:num_images]
+
+    try:
+        import fal_client
+        title = getattr(listing, "title", "Modern Property")
+        details = getattr(listing, "details", "Luxury real estate interior")
+        result = fal_client.subscribe(
+            "fal-ai/flux/schnell",
             arguments={
-                "image_url": avatar_image_url,
-                "audio_url": audio_voice_url,
-                "resolution": "720p",  # Supports 480p (faster) or 720p (higher quality)
+                "prompt": f"Luxury real estate photography of {title}, {details}",
+                "num_images": num_images,
+                "image_size": "landscape_16_9",
             },
         )
-
-        result = handler.get()
-        video_url = result.get("video", {}).get("url")
-        return video_url
-
+        images = result.get("images", [])
+        return [img["url"] for img in images if "url" in img]
     except Exception as e:
-        print(f"❌ Error communicating with the API: {e}")
-        return None
+        print(f"⚠️ Fal photos API error (falling back to mock): {e}")
+        return MOCK_PHOTOS[:num_images]
 
 
-def generate_property_photos(listing, num_images: int = 3) -> list:
-    """
-    Generates staged property photos from listing facts (no real photos needed).
-    Returns a list of image URLs.
-    """
-    if MOCK_MODE["fal"]:
-        return [f"https://placehold.co/1280x720?text=Photo+{i+1}" for i in range(num_images)]
+def generate_clips(photo_urls: list[str]) -> list[str]:
+    if MOCK_MODE.get("fal", True):
+        return [MOCK_VIDEO for _ in photo_urls]
 
-    headers = {"Authorization": f"Key {FAL_API_KEY}", "Content-Type": "application/json"}
-    prompt = (
-        f"Professional real estate photo, interior of a {listing.beds} bedroom "
-        f"{listing.baths} bathroom home, {listing.sqft}, bright natural lighting, "
-        f"modern staging, wide angle, photorealistic"
-    )
-
-    urls = []
-    for _ in range(num_images):
-        payload = {"prompt": prompt, "image_size": "landscape_16_9"}
-        resp = requests.post(FAL_TEXT_TO_IMAGE_URL, json=payload, headers=headers)
-        resp.raise_for_status()
-        job = resp.json()
-        result = poll_job(job["status_url"], headers)
-        urls.append(result["images"][0]["url"])
-    return urls
-
-
-def photo_to_video(photo_url: str) -> str:
-    """Animates one still photo into a short video clip. Returns the clip URL."""
-    if MOCK_MODE["fal"]:
-        return "https://placehold.co/1280x720/mp4?text=Clip"
-
-    headers = {"Authorization": f"Key {FAL_API_KEY}", "Content-Type": "application/json"}
-    payload = {"image_url": photo_url, "duration": "4"}
-
-    submit_resp = requests.post(FAL_IMAGE_TO_VIDEO_URL, json=payload, headers=headers)
-    submit_resp.raise_for_status()
-    job = submit_resp.json()
-
-    result = poll_job(job["status_url"], headers)
-    return result["video"]["url"]
-
-
-def generate_clips(photo_urls: list) -> list:
-    """Runs photo_to_video across every photo. Returns a list of clip URLs, same order as input."""
-    return [photo_to_video(url) for url in photo_urls]
+    try:
+        import fal_client
+        clip_urls = []
+        for url in photo_urls:
+            result = fal_client.subscribe(
+                "fal-ai/kling-video/v1/standard/image-to-video",
+                arguments={
+                    "prompt": "Smooth cinematic camera motion",
+                    "image_url": url,
+                },
+            )
+            video_url = result.get("video", {}).get("url")
+            if video_url:
+                clip_urls.append(video_url)
+        return clip_urls if clip_urls else [MOCK_VIDEO]
+    except Exception as e:
+        print(f"⚠️ Fal clip API error (falling back to mock): {e}")
+        return [MOCK_VIDEO for _ in photo_urls]

@@ -1,14 +1,15 @@
 import os
 import time
+from types import SimpleNamespace
 import streamlit as st
 from dotenv import load_dotenv
 
 # Import Backend Services
 from services.tavily_service import get_market_context
 from services.openai_service import generate_script_and_description
-from services.fal_service import generate_property_photos, generate_clips
 from services.veed_service import assemble_video
 from services.h_service import post_listing
+from services.fal_service import generate_property_photos, generate_clips, upload_all_photos
 
 load_dotenv()
 
@@ -166,10 +167,18 @@ with st.container(border=True):
             prop_address = st.text_input("Address / Neighborhood", value="Brickell, Miami FL",
                                          placeholder="Brickell, Miami FL")
 
+        c3, c4, c5 = st.columns(3)
+        with c3:
+            prop_beds = st.text_input("Bedrooms", value="3")
+        with c4:
+            prop_baths = st.text_input("Bathrooms", value="3")
+        with c5:
+            prop_sqft = st.text_input("Square Feet", value="2,500 sqft")
+
         script_desc = st.text_area(
             "Selling Features & Amenities",
-            value="3 Bed, 3 Bath, ocean views, private balcony, newly renovated kitchen with marble finishes.",
-            height=90
+            value="Ocean views, private balcony, newly renovated kitchen with marble finishes.",
+            height=70
         )
 
         pioneer_persona = st.selectbox(
@@ -201,6 +210,17 @@ with st.container(border=True):
             status_text = st.empty()
             progress_bar = st.progress(0)
 
+            # Build Listing object for services expecting dot notation
+            listing_obj = SimpleNamespace(
+                title=prop_title,
+                address=prop_address,
+                price=prop_price,
+                beds=prop_beds,
+                baths=prop_baths,
+                sqft=prop_sqft,
+                details=script_desc
+            )
+
             # Step 1: Tavily Service Call
             if use_tavily:
                 status_text.markdown(
@@ -215,28 +235,30 @@ with st.container(border=True):
 
             # Step 2: OpenAI + Pioneer Script Generation
             status_text.markdown(
-                f"**Phase 2/5 [OpenAI + Pioneer]:** Synthesizing script in `{pioneer_persona}` voice...")
+                f"**Phase 2/5 [OpenAI + Pioneer]:** Synthesizing script in `{pioneer_persona}` voice..."
+            )
             progress_bar.progress(40)
 
-            listing_payload = {
-                "title": prop_title,
-                "price": prop_price,
-                "address": prop_address,
-                "details": script_desc
-            }
-            script, social_desc = generate_script_and_description(listing_payload, market_context,
-                                                                  persona=pioneer_persona)
-
+            script, social_desc = generate_script_and_description(
+                listing_obj, market_context, persona=pioneer_persona
+            )
             st.session_state["generated_script"] = script
             st.session_state["social_description"] = social_desc
 
             # Step 3 & 4: Fal.ai Photo Generation & Video Motion Clips
-            status_text.markdown("**Phase 3 & 4/5 [Fal.ai Studio]:** Generating photos & spatial motion clips...")
+            status_text.markdown("**Phase 3 & 4/5 [Fal.ai Studio]:** Processing photos into spatial motion clips...")
             progress_bar.progress(70)
 
-            # Use mock photo URLs or uploaded files
-            photo_urls = ["https://placehold.co/1280x720?text=Room+1", "https://placehold.co/1280x720?text=Room+2"]
+            if uploaded_photos:
+                photo_urls = upload_all_photos(uploaded_photos)
+            else:
+                photo_urls = generate_property_photos(listing_obj, num_images=3)
+
+            # Save URLs into session state so they display on reruns
+            st.session_state["photo_urls"] = photo_urls
+
             motion_clips = generate_clips(photo_urls)
+            st.session_state["motion_clips"] = motion_clips
 
             # Step 5: VEED Video Assembly
             status_text.markdown("**Phase 5/5 [VEED Renderer]:** Synthesizing avatar, voice track & captions...")
@@ -280,7 +302,17 @@ if st.session_state["video_generated"]:
 
                 exports = st.session_state.get("video_exports", {})
                 selected_format = st.radio("Export Aspect Ratio", ["vertical", "horizontal", "square"], horizontal=True)
-                st.video(exports.get(selected_format, "https://www.w3schools.com/html/mov_bbb.mp4"))
+
+                video_url = exports.get(selected_format) or "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
+                st.video(video_url)
+
+
+
+                # Display active source images below the player
+                photos = st.session_state.get("photo_urls", [])
+                if photos:
+                    st.markdown("#### Source Property Photos")
+                    st.image(photos, use_container_width=True)
 
             with v_col2:
                 st.markdown("#### Pioneer Voiceover Script")
@@ -313,7 +345,6 @@ if st.session_state["video_generated"]:
                         log_box.markdown("`[H-Agent]` Launching Chromium instance...")
                         time.sleep(0.6)
 
-                        # Call H-Service
                         video_url = st.session_state.get("video_exports", {}).get("vertical", "")
                         desc = st.session_state.get("social_description", "")
                         results = post_listing(video_url, desc, selected_portals)
