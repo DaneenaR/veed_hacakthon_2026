@@ -3,55 +3,131 @@ import time
 import streamlit as st
 from dotenv import load_dotenv
 
+# Import Backend Services
+from services.tavily_service import get_market_context
+from services.openai_service import generate_script_and_description
+from services.fal_service import generate_property_photos, generate_clips
+from services.veed_service import assemble_video
+from services.h_service import post_listing
+
 load_dotenv()
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Sheeld RealtorAI | Studio",
-    page_icon="🔮",
+    page_title="Sheeld RealtorAI | Media Studio",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# --- CUSTOM CSS ---
+# --- SVG ICONS ---
+SVG_HOUSE = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6D28D9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>'
+SVG_SPARKLE = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>'
+
+# --- TAILWIND & CUSTOM CSS ---
+st.markdown('<script src="https://cdn.tailwindcss.com"></script>', unsafe_allow_html=True)
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
     .stApp {
-        background-color: #F4F6FC;
-        color: #1E293B;
-        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        background: linear-gradient(135deg, #F3F0FF 0%, #EBE5FF 50%, #F5F3FF 100%);
+        color: #0F172A;
+        font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     }
-    .brand-logo {
-        font-size: 1.6rem;
+
+    .brand-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 24px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid rgba(203, 213, 225, 0.6);
+    }
+    .brand-title {
+        font-size: 1.5rem;
         font-weight: 800;
-        color: #4F46E5;
-        margin-bottom: 20px;
+        letter-spacing: -0.5px;
+        color: #4C1D95;
+        display: flex;
+        align-items: center;
+        gap: 10px;
     }
-    .stButton>button {
-        border-radius: 12px;
+    .studio-badge {
+        background: rgba(109, 40, 217, 0.1);
+        border: 1px solid rgba(109, 40, 217, 0.25);
+        color: #6D28D9;
+        font-size: 0.7rem;
+        font-weight: 700;
+        padding: 3px 8px;
+        border-radius: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: rgba(255, 255, 255, 0.72) !important;
+        backdrop-filter: blur(16px) saturate(180%) !important;
+        -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+        border: 1px solid rgba(203, 213, 225, 0.85) !important;
+        border-radius: 18px !important;
+        box-shadow: 0 12px 32px -8px rgba(109, 40, 217, 0.06) !important;
+    }
+
+    .viewfinder-bar {
+        background: #0F172A;
+        color: #94A3B8;
+        padding: 8px 14px;
+        border-top-left-radius: 12px;
+        border-top-right-radius: 12px;
+        font-size: 0.75rem;
         font-weight: 600;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        letter-spacing: 0.5px;
     }
+    .rec-dot {
+        height: 8px;
+        width: 8px;
+        background-color: #EF4444;
+        border-radius: 50%;
+        display: inline-block;
+        box-shadow: 0 0 8px #EF4444;
+        animation: pulse-red 1.5s infinite;
+    }
+    @keyframes pulse-red {
+        0% { opacity: 1; }
+        50% { opacity: 0.3; }
+        100% { opacity: 1; }
+    }
+
+    .stButton>button {
+        background: linear-gradient(135deg, #6D28D9 0%, #5B21B6 100%) !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+        box-shadow: 0 4px 12px rgba(109, 40, 217, 0.25) !important;
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 6px;
+        background: rgba(237, 233, 254, 0.5);
+        padding: 4px;
+        border-radius: 12px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #FFFFFF !important;
+        color: #5B21B6 !important;
+        box-shadow: 0 2px 8px rgba(109, 40, 217, 0.1) !important;
+    }
+
     .app-footer {
         text-align: center;
-        padding: 30px 0 10px 0;
-        color: #64748B;
-        font-size: 0.85rem;
-        font-weight: 500;
-        letter-spacing: 0.3px;
-    }
-    .comp-card {
-        background: #F8FAFC;
-        border: 1px solid #E2E8F0;
-        border-radius: 12px;
-        padding: 14px;
-        margin-bottom: 10px;
-    }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 10px;
-        padding: 8px 16px;
+        padding: 24px 0 8px 0;
+        color: #6B21A8;
+        font-size: 0.8rem;
+        font-weight: 600;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -60,13 +136,23 @@ if "video_generated" not in st.session_state:
     st.session_state["video_generated"] = False
 
 # --- HEADER ---
-st.markdown(
-    "<div class='brand-logo'>🔮 <b>sheeld</b> <span style='color:#94A3B8; font-weight:400;'>| RealtorAI Studio</span></div>",
-    unsafe_allow_html=True)
+st.markdown(f"""
+<div class="brand-header">
+    <div class="brand-title">
+        {SVG_HOUSE} <span>sheeld</span> <span style="font-weight:300; color:#6D28D9;">REALTOR STUDIO</span>
+    </div>
+    <div>
+        <span class="studio-badge">Pioneer v2.1 Engine</span>
+        <span class="studio-badge" style="margin-left: 6px;">VEED Core Active</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
-# --- SECTION 1: CREATE PROPERTY (INPUT SECTION) ---
+# --- SECTION 1: CREATE PROPERTY ---
 with st.container(border=True):
-    st.markdown("### 🏡 Create Property Video")
+    st.markdown(
+        f"<div style='display:flex; align-items:center; gap:8px; font-weight:700; font-size:1.1rem; color:#4C1D95; margin-bottom:12px;'>{SVG_SPARKLE} Listing Parameters & Script Specs</div>",
+        unsafe_allow_html=True)
 
     col_left, col_right = st.columns(2)
 
@@ -75,156 +161,175 @@ with st.container(border=True):
 
         c1, c2 = st.columns(2)
         with c1:
-            prop_price = st.text_input("Price", value="$1,250,000", placeholder="$1,250,000")
+            prop_price = st.text_input("List Price", value="$1,250,000", placeholder="$1,250,000")
         with c2:
             prop_address = st.text_input("Address / Neighborhood", value="Brickell, Miami FL",
                                          placeholder="Brickell, Miami FL")
 
         script_desc = st.text_area(
-            "Property Details & Selling Features (Script Input)",
+            "Selling Features & Amenities",
             value="3 Bed, 3 Bath, ocean views, private balcony, newly renovated kitchen with marble finishes.",
-            height=100
+            height=90
         )
 
-        use_tavily = st.checkbox("🔍 Fetch live Tavily market comps to enrich OpenAI script", value=True)
+        pioneer_persona = st.selectbox(
+            "Pioneer Brand Voice Model",
+            ["Luxury Estate Specialist", "High-Energy Modern Agent", "Data-Driven Investment Broker"]
+        )
 
     with col_right:
         uploaded_photos = st.file_uploader(
-            "Upload Property Pictures (Fal.ai)",
+            "Property Photography Assets (Fal.ai)",
             type=["png", "jpg", "jpeg"],
             accept_multiple_files=True
         )
 
         target_lang = st.selectbox(
-            "Voiceover Language (VEED)",
+            "Narrator Voiceover Language (VEED)",
             ["English", "Spanish", "French", "Mandarin"]
         )
 
+        use_tavily = st.checkbox("Include live Tavily neighborhood market research", value=True)
+
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # GENERATE BUTTON & PROGRESS PIPELINE
-    if st.button("⚡ Generate Video", type="primary", use_container_width=True):
+    # GENERATE BUTTON PIPELINE
+    if st.button("Generate Property Tour Video", type="primary", use_container_width=True):
         if not prop_title:
             st.warning("Please enter a property title before generating.")
         else:
             status_text = st.empty()
             progress_bar = st.progress(0)
 
-            # Step 1: Tavily Search Comps
+            # Step 1: Tavily Service Call
             if use_tavily:
-                status_text.markdown("🔍 **Step 1/4 (Tavily):** Searching neighborhood comps & market trends...")
-                progress_bar.progress(25)
-                time.sleep(1.0)
-
-                st.session_state["tavily_comps"] = [
-                    {"address": "101 Brickell Ave #1402", "price": "$1,180,000", "sqft": "$810/sqft",
-                     "status": "Sold 2 wks ago"},
-                    {"address": "150 SE 25th Rd #801", "price": "$1,310,000", "sqft": "$845/sqft",
-                     "status": "Sold 1 mo ago"},
-                    {"address": "Brickell Submarket Trend", "price": "+12.4% YoY Growth",
-                     "sqft": "Avg 32 Days on Market", "status": "Active Market Trend"}
-                ]
+                status_text.markdown(
+                    "**Phase 1/5 [Tavily API]:** Querying submarket comps & historical transactions...")
+                progress_bar.progress(20)
+                market_context = get_market_context(prop_address)
             else:
-                st.session_state["tavily_comps"] = []
+                market_context = "No live market data requested."
+                progress_bar.progress(20)
 
-            # Step 2: OpenAI Scripting
-            status_text.markdown("✍️ **Step 2/4 (OpenAI):** Merging listing details + Tavily comps into tour script...")
-            progress_bar.progress(50)
-            time.sleep(1.0)
+            st.session_state["market_context"] = market_context
 
-            st.session_state["generated_script"] = (
-                f"Welcome to {prop_title} in {prop_address}, offered at {prop_price}. "
-                f"Featuring {script_desc} With Brickell submarket prices growing over 12% YoY, "
-                f"this home represents top value compared to recent neighborhood sales averaging over $800/sqft. "
-                f"Schedule your tour today!"
-            )
+            # Step 2: OpenAI + Pioneer Script Generation
+            status_text.markdown(
+                f"**Phase 2/5 [OpenAI + Pioneer]:** Synthesizing script in `{pioneer_persona}` voice...")
+            progress_bar.progress(40)
 
-            # Step 3: Fal.ai Motion
-            status_text.markdown("🖼️ **Step 3/4 (Fal.ai):** Generating motion clips from property photos...")
-            progress_bar.progress(75)
-            time.sleep(1.0)
+            listing_payload = {
+                "title": prop_title,
+                "price": prop_price,
+                "address": prop_address,
+                "details": script_desc
+            }
+            script, social_desc = generate_script_and_description(listing_payload, market_context,
+                                                                  persona=pioneer_persona)
 
-            # Step 4: VEED Rendering
-            status_text.markdown("🎬 **Step 4/4 (VEED):** Synthesizing avatar voiceover & compiling captions...")
+            st.session_state["generated_script"] = script
+            st.session_state["social_description"] = social_desc
+
+            # Step 3 & 4: Fal.ai Photo Generation & Video Motion Clips
+            status_text.markdown("**Phase 3 & 4/5 [Fal.ai Studio]:** Generating photos & spatial motion clips...")
+            progress_bar.progress(70)
+
+            # Use mock photo URLs or uploaded files
+            photo_urls = ["https://placehold.co/1280x720?text=Room+1", "https://placehold.co/1280x720?text=Room+2"]
+            motion_clips = generate_clips(photo_urls)
+
+            # Step 5: VEED Video Assembly
+            status_text.markdown("**Phase 5/5 [VEED Renderer]:** Synthesizing avatar, voice track & captions...")
             progress_bar.progress(100)
-            time.sleep(1.0)
+
+            video_exports = assemble_video(motion_clips, script)
+            st.session_state["video_exports"] = video_exports
 
             status_text.empty()
             progress_bar.empty()
-            st.toast("Tour video generated successfully!")
+            st.toast("Media render completed successfully!")
 
             st.session_state["video_generated"] = True
-            st.session_state["video_url"] = "https://www.w3schools.com/html/mov_bbb.mp4"
             st.session_state["active_title"] = prop_title
             st.rerun()
 
-# --- SECTION 2: OUTPUT & MARKET COMPARISON (LOADS BELOW GENERATE BUTTON) ---
+# --- SECTION 2: RESULTS STUDIO TABS ---
 if st.session_state["video_generated"]:
     st.markdown("<br>", unsafe_allow_html=True)
 
     with st.container(border=True):
-        st.markdown(f"### 🎬 Results Studio: {st.session_state.get('active_title', '')}")
+        st.markdown(f"### Media Output Monitor: {st.session_state.get('active_title', '')}")
 
-        # TABBED OUTPUT LAYOUT
         tab_video, tab_comps, tab_publish = st.tabs([
-            "📽️ Rendered Video & Script (VEED + OpenAI)",
-            "📊 Market Comps Comparison (Tavily)",
-            "🚀 Publish & Export (H-Agent)"
+            "Rendered Tour Video & Script",
+            "Market Intelligence & Comps",
+            "Multi-Portal Automation"
         ])
 
         # TAB 1: VIDEO PLAYER & SCRIPT
         with tab_video:
             v_col1, v_col2 = st.columns([1.2, 1])
             with v_col1:
-                st.markdown("#### Rendered Tour Video")
-                st.video(st.session_state["video_url"])
+                st.markdown("""
+                <div class="viewfinder-bar">
+                    <div><span class="rec-dot"></span> LIVE MONITOR</div>
+                    <div>4K PRORES • 60 FPS</div>
+                    <div>VEED + PIONEER PIPELINE</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                exports = st.session_state.get("video_exports", {})
+                selected_format = st.radio("Export Aspect Ratio", ["vertical", "horizontal", "square"], horizontal=True)
+                st.video(exports.get(selected_format, "https://www.w3schools.com/html/mov_bbb.mp4"))
+
             with v_col2:
-                st.markdown("#### OpenAI Narration Script")
+                st.markdown("#### Pioneer Voiceover Script")
                 st.info(st.session_state.get("generated_script", ""))
 
-        # TAB 2: TAVILY MARKET COMPS COMPARISON
+                st.markdown("#### Generated Social Description")
+                st.success(st.session_state.get("social_description", ""))
+
+        # TAB 2: TAVILY MARKET COMPS
         with tab_comps:
-            st.markdown("#### Neighborhood Comps & Market Intelligence")
-            st.caption("Live search results fetched via Tavily API to ground script pricing context.")
+            st.markdown("#### Neighborhood Valuation Context (Tavily)")
+            st.caption("Live research extracted to back up listing price point.")
+            st.info(st.session_state.get("market_context", "No context available."))
 
-            comps = st.session_state.get("tavily_comps", [])
-            if comps:
-                comp_cols = st.columns(len(comps))
-                for idx, comp in enumerate(comps):
-                    with comp_cols[idx]:
-                        st.markdown(f"""
-                        <div class='comp-card'>
-                            <b>📍 {comp['address']}</b><br/>
-                            <span style='color: #4F46E5; font-weight:700; font-size:1.1rem;'>{comp['price']}</span><br/>
-                            <small>{comp['sqft']} • <i>{comp['status']}</i></small>
-                        </div>
-                        """, unsafe_allow_html=True)
-            else:
-                st.info("No Tavily market comps were requested for this render.")
-
-        # TAB 3: H-AGENT AUTOMATION & EXPORT
+        # TAB 3: H-AGENT AUTOMATION
         with tab_publish:
             p_col1, p_col2 = st.columns(2)
 
             with p_col1:
-                st.markdown("#### 🤖 Auto-Post via H-Agent")
+                st.markdown("#### H-Agent Browser Automation")
                 selected_portals = st.multiselect(
-                    "Select Target Portals",
-                    ["Zillow Manager", "Facebook Marketplace", "MLS Matrix"],
-                    default=["Zillow Manager", "Facebook Marketplace"]
+                    "Target Syndication Channels",
+                    ["Zillow Rental Manager", "Facebook Marketplace", "MLS Matrix Network"],
+                    default=["Zillow Rental Manager", "Facebook Marketplace"]
                 )
 
-                if st.button("Launch H-Agent Automation", type="primary", use_container_width=True):
-                    with st.spinner("H-Agent opening headless browser to post listing..."):
-                        time.sleep(2)
-                        st.success("H-Agent successfully submitted listings to selected portals!")
+                if st.button("Dispatch H-Agent Browser Automation", type="primary", use_container_width=True):
+                    log_box = st.empty()
+                    with st.spinner("Executing headless browser instance..."):
+                        log_box.markdown("`[H-Agent]` Launching Chromium instance...")
+                        time.sleep(0.6)
+
+                        # Call H-Service
+                        video_url = st.session_state.get("video_exports", {}).get("vertical", "")
+                        desc = st.session_state.get("social_description", "")
+                        results = post_listing(video_url, desc, selected_portals)
+
+                        for portal, result in results.items():
+                            log_box.markdown(f"`[H-Agent]` **{portal}**: {result}")
+                            time.sleep(0.5)
+
+                        log_box.success("Syndication finished across all selected target platforms.")
 
             with p_col2:
-                st.markdown("#### 💾 Local Export")
-                st.write("Download the MP4 video file to your computer.")
+                st.markdown("#### Master Video Asset Export")
+                st.write("Download MP4 video asset for direct social sharing.")
 
                 st.download_button(
-                    label="📥 Download Video (.mp4)",
+                    label="Download MP4 Video Asset",
                     data=b"sample_video_bytes_content",
                     file_name=f"{st.session_state.get('active_title', 'property').lower().replace(' ', '_')}_tour.mp4",
                     mime="video/mp4",
@@ -232,11 +337,11 @@ if st.session_state["video_generated"]:
                 )
 
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("➕ Create Another Property Video", use_container_width=True):
+        if st.button("Create New Property Tour Video", use_container_width=True):
             st.session_state["video_generated"] = False
             st.rerun()
 
-# --- FOOTER WATERMARK ---
+# --- FOOTER ---
 st.markdown(
     "<div class='app-footer'>created with love ❤️: Daneena Roy, Fatima Amir, Fatima Waseem</div>",
     unsafe_allow_html=True
