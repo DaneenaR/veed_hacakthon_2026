@@ -17,9 +17,9 @@ FAL_IMAGE_TO_VIDEO_URL = "https://queue.fal.run/fal-ai/kling-video/v1/standard/i
 
 # Set mock mode flags to False to run live API requests
 MOCK_MODE = {
-    "tavily": True,
-    "openai": True,
-    "fal": True,
-    "veed": True,
+    "tavily": False,
+    "openai": False,
+    "fal": False,
+    "veed": False,
     "h": True,
 }

@@ -1,5 +1,6 @@
 import os
 import time
+import requests
 from types import SimpleNamespace
 import streamlit as st
 from dotenv import load_dotenv
@@ -9,7 +10,7 @@ from services.tavily_service import get_market_context
 from services.openai_service import generate_script_and_description
 from services.veed_service import assemble_video
 from services.h_service import post_listing
-from services.fal_service import generate_property_photos, generate_clips, upload_all_photos
+from services.fal_service import upload_all_photos, generate_clips, NoPhotosUploadedError
 
 load_dotenv()
 
@@ -188,7 +189,7 @@ with st.container(border=True):
 
     with col_right:
         uploaded_photos = st.file_uploader(
-            "Property Photography Assets (Fal.ai)",
+            "Property Photography Assets (Fal.ai) — required",
             type=["png", "jpg", "jpeg"],
             accept_multiple_files=True
         )
@@ -206,6 +207,8 @@ with st.container(border=True):
     if st.button("Generate Property Tour Video", type="primary", use_container_width=True):
         if not prop_title:
             st.warning("Please enter a property title before generating.")
+        elif not uploaded_photos:
+            st.error("📸 Please upload at least one property photo before generating a video.")
         else:
             status_text = st.empty()
             progress_bar = st.progress(0)
@@ -221,59 +224,73 @@ with st.container(border=True):
                 details=script_desc
             )
 
-            # Step 1: Tavily Service Call
-            if use_tavily:
+            try:
+                # Step 1: Tavily Service Call
+                if use_tavily:
+                    status_text.markdown(
+                        "**Phase 1/6 [Tavily API]:** Querying submarket comps & historical transactions...")
+                    progress_bar.progress(15)
+                    market_context = get_market_context(prop_address)
+                else:
+                    market_context = "No live market data requested."
+                    progress_bar.progress(15)
+
+                st.session_state["market_context"] = market_context
+
+                # Step 2: OpenAI + Pioneer Script Generation
                 status_text.markdown(
-                    "**Phase 1/5 [Tavily API]:** Querying submarket comps & historical transactions...")
-                progress_bar.progress(20)
-                market_context = get_market_context(prop_address)
-            else:
-                market_context = "No live market data requested."
-                progress_bar.progress(20)
+                    f"**Phase 2/6 [OpenAI + Pioneer]:** Synthesizing script in `{pioneer_persona}` voice..."
+                )
+                progress_bar.progress(30)
 
-            st.session_state["market_context"] = market_context
+                script, social_desc = generate_script_and_description(
+                    listing_obj, market_context, persona=pioneer_persona
+                )
+                st.session_state["generated_script"] = script
+                st.session_state["social_description"] = social_desc
 
-            # Step 2: OpenAI + Pioneer Script Generation
-            status_text.markdown(
-                f"**Phase 2/5 [OpenAI + Pioneer]:** Synthesizing script in `{pioneer_persona}` voice..."
-            )
-            progress_bar.progress(40)
+                # Step 3: Fal.ai Photo Upload
+                status_text.markdown("**Phase 3/6 [Fal.ai Studio]:** Uploading property photos...")
+                progress_bar.progress(45)
 
-            script, social_desc = generate_script_and_description(
-                listing_obj, market_context, persona=pioneer_persona
-            )
-            st.session_state["generated_script"] = script
-            st.session_state["social_description"] = social_desc
-
-            # Step 3 & 4: Fal.ai Photo Generation & Video Motion Clips
-            status_text.markdown("**Phase 3 & 4/5 [Fal.ai Studio]:** Processing photos into spatial motion clips...")
-            progress_bar.progress(70)
-
-            if uploaded_photos:
                 photo_urls = upload_all_photos(uploaded_photos)
-            else:
-                photo_urls = generate_property_photos(listing_obj, num_images=3)
+                st.session_state["photo_urls"] = photo_urls
 
-            # Save URLs into session state so they display on reruns
-            st.session_state["photo_urls"] = photo_urls
+                # Step 4: Fal.ai Motion Clip Generation
+                status_text.markdown("**Phase 4/6 [Fal.ai Studio]:** Generating cinematic property motion clips...")
+                progress_bar.progress(60)
 
-            motion_clips = generate_clips(photo_urls)
-            st.session_state["motion_clips"] = motion_clips
+                motion_clips = generate_clips(photo_urls)
+                st.session_state["motion_clips"] = motion_clips
 
-            # Step 5: VEED Video Assembly
-            status_text.markdown("**Phase 5/5 [VEED Renderer]:** Synthesizing avatar, voice track & captions...")
-            progress_bar.progress(100)
+                # Step 5: VEED — Female AI Voiceover + Audio Merge
+                status_text.markdown("**Phase 5/6 [VEED]:** Recording female AI voiceover & merging audio...")
+                progress_bar.progress(80)
 
-            video_exports = assemble_video(motion_clips, script)
-            st.session_state["video_exports"] = video_exports
+                # Step 6: VEED — Captioning (both happen inside assemble_video)
+                status_text.markdown("**Phase 6/6 [VEED]:** Burning in captions & finalizing render...")
+                progress_bar.progress(95)
 
-            status_text.empty()
-            progress_bar.empty()
-            st.toast("Media render completed successfully!")
+                video_exports = assemble_video(motion_clips, script)
+                st.session_state["video_exports"] = video_exports
 
-            st.session_state["video_generated"] = True
-            st.session_state["active_title"] = prop_title
-            st.rerun()
+                progress_bar.progress(100)
+                status_text.empty()
+                progress_bar.empty()
+                st.toast("Media render completed successfully!")
+
+                st.session_state["video_generated"] = True
+                st.session_state["active_title"] = prop_title
+                st.rerun()
+
+            except NoPhotosUploadedError as e:
+                status_text.empty()
+                progress_bar.empty()
+                st.error(f"📸 {e}")
+            except RuntimeError as e:
+                status_text.empty()
+                progress_bar.empty()
+                st.error(f"⚠️ Video generation failed: {e}")
 
 # --- SECTION 2: RESULTS STUDIO TABS ---
 if st.session_state["video_generated"]:
@@ -305,8 +322,6 @@ if st.session_state["video_generated"]:
 
                 video_url = exports.get(selected_format) or "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
                 st.video(video_url)
-
-
 
                 # Display active source images below the player
                 photos = st.session_state.get("photo_urls", [])
@@ -359,13 +374,22 @@ if st.session_state["video_generated"]:
                 st.markdown("#### Master Video Asset Export")
                 st.write("Download MP4 video asset for direct social sharing.")
 
-                st.download_button(
-                    label="Download MP4 Video Asset",
-                    data=b"sample_video_bytes_content",
-                    file_name=f"{st.session_state.get('active_title', 'property').lower().replace(' ', '_')}_tour.mp4",
-                    mime="video/mp4",
-                    use_container_width=True
-                )
+                final_video_url = st.session_state.get("video_exports", {}).get("vertical", "")
+
+                if final_video_url:
+                    try:
+                        video_bytes = requests.get(final_video_url, timeout=60).content
+                        st.download_button(
+                            label="Download MP4 Video Asset",
+                            data=video_bytes,
+                            file_name=f"{st.session_state.get('active_title', 'property').lower().replace(' ', '_')}_tour.mp4",
+                            mime="video/mp4",
+                            use_container_width=True
+                        )
+                    except Exception:
+                        st.warning("Couldn't fetch the video for download right now. Try again in a moment.")
+                else:
+                    st.info("Generate a video first to enable download.")
 
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Create New Property Tour Video", use_container_width=True):
