@@ -1,4 +1,4 @@
-# Sheeld RealtorAI — Listing Video Generator
+# Sheeld RealtorAI: Listing Video Generator
 
 An AI-powered Streamlit app that turns property photos and listing details into a fully produced real estate tour video, complete with a persuasive script, a female AI voiceover, a lip-synced talking presenter, and burned-in captions.
 
